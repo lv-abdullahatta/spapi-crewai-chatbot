@@ -1,0 +1,80 @@
+version: '3.8'
+
+services:
+  # MCP Server
+  mcp-server:
+    image: node:18
+    working_dir: /app
+    volumes:
+      - ./sp-api-mcp-server:/app
+      - /app/node_modules
+    ports:
+      - "7000:7000"
+    environment:
+      - AWS_REGION=${AWS_REGION}
+      - SP_API_REFRESH_TOKEN=${SP_API_REFRESH_TOKEN}
+      - SP_API_CLIENT_ID=${SP_API_CLIENT_ID}
+      - SP_API_CLIENT_SECRET=${SP_API_CLIENT_SECRET}
+    command: sh -c "npm install && npm start"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:7000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # SP-API Agent System
+  sp-api-agent:
+    build:
+      context: ./sp-api-agent-system
+      dockerfile: Dockerfile
+    ports:
+      - "5001:5001"
+    environment:
+      - MCP_SERVER_URL=http://mcp-server:7000
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - AWS_REGION=${AWS_REGION}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+    depends_on:
+      mcp-server:
+        condition: service_healthy
+    volumes:
+      - ./sp-api-agent-system:/app
+      - /app/__pycache__
+    command: python sp_api_agent_system.py
+
+  # Backend API
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "5000:5000"
+    environment:
+      - AGENT_URL=http://sp-api-agent:5001
+      - MCP_SERVER_URL=http://mcp-server:7000
+      - AWS_REGION=${AWS_REGION}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+    depends_on:
+      sp-api-agent:
+        condition: service_started
+    volumes:
+      - ./backend:/app
+      - /app/__pycache__
+    command: python web_interface.py
+
+  # Frontend
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "80:80"
+    environment:
+      - REACT_APP_BACKEND_URL=http://backend:5000
+    depends_on:
+      - backend
+
+volumes:
+  node_modules:
